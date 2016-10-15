@@ -20,10 +20,6 @@ using TumblThree.Domain.Queue;
 using System.Windows;
 using System.Windows.Threading;
 using System.Globalization;
-using System.Web.Script.Serialization;
-using System.Web;
-using System.Net;
-using System.Text;
 using System.Xml.Linq;
 
 namespace TumblThree.Applications.Controllers
@@ -340,7 +336,7 @@ namespace TumblThree.Applications.Controllers
 
             var parallel = Parallel.ForEach(
                 imageUrls,
-                    new ParallelOptions { MaxDegreeOfParallelism = (shellService.Settings.ParallelImages / shellService.Settings.ParallelBlogs) },
+                    new ParallelOptions { MaxDegreeOfParallelism = (shellService.Settings.ParallelImages / selectionService.ActiveItems.Count) },
                     (currentImageUrl, state) =>
                     {
                         if (ct.IsCancellationRequested)
@@ -695,7 +691,7 @@ namespace TumblThree.Applications.Controllers
             int totalPages = (totalPosts / 50) + 1;
 
             Parallel.For(0, totalPages,
-                        new ParallelOptions { MaxDegreeOfParallelism = (shellService.Settings.ParallelImages / shellService.Settings.ParallelBlogs) },
+                        new ParallelOptions { MaxDegreeOfParallelism = (shellService.Settings.ParallelImages / selectionService.ActiveItems.Count) },
                         (i, state) =>
                         {
                             if (ct.IsCancellationRequested)
@@ -712,7 +708,7 @@ namespace TumblThree.Applications.Controllers
                                     XDocument document = null;
 
                                     // get 50 posts per crawl/page
-                                    document = XDocument.Load(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50");
+                                    document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
 
                                     if (shellService.Settings.DownloadImages == true)
                                     {
@@ -782,7 +778,7 @@ namespace TumblThree.Applications.Controllers
                                     XDocument document = null;
 
                                     // get 50 posts per crawl/page
-                                    document = XDocument.Load(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50");
+                                    document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
 
                                     if (shellService.Settings.DownloadImages == true)
                                     {
@@ -897,10 +893,8 @@ namespace TumblThree.Applications.Controllers
                 Monitor.Exit(blog);
                 try
                 {
-                    using (System.Net.WebClient client = new System.Net.WebClient())
-                    {
-                        client.DownloadFile(url, fileLocation);
-                    }
+                    using (var stream = ThrottledStream.ReadFromURLIntoStream(url, (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut))
+                        ThrottledStream.SaveStreamToDisk(stream, fileLocation);
                     return true;
                 }
                 catch (Exception)

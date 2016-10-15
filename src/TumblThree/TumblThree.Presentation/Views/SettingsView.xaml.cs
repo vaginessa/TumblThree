@@ -1,27 +1,18 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Waf.Applications;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
 using TumblThree.Applications.ViewModels;
 using TumblThree.Applications.Views;
+using System.Text.RegularExpressions;
 
 namespace TumblThree.Presentation.Views
 {
     /// <summary>
     /// Interaction logic for SettingsView.xaml
     /// </summary>
-   [Export(typeof(ISettingsView)), PartCreationPolicy(CreationPolicy.NonShared)]
+    [Export(typeof(ISettingsView)), PartCreationPolicy(CreationPolicy.NonShared)]
     public partial class SettingsView : Window, ISettingsView
     {
 
@@ -44,6 +35,13 @@ namespace TumblThree.Presentation.Views
         private void closeWindow(object sender, RoutedEventArgs e)
         {
             this.Close();
+        }
+
+
+        private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
+        {
+            Regex regex = new Regex("[^0-9]+");
+            e.Handled = regex.IsMatch(e.Text);
         }
     }
 }
