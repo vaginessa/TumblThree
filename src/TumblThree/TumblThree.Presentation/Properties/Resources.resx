@@ -367,7 +367,7 @@
     <value>Link</value>
   </data>
   <data name="Posts" xml:space="preserve">
-    <value>Posts</value>
+    <value>Post</value>
   </data>
   <data name="Quotes" xml:space="preserve">
     <value>Quote</value>
@@ -379,7 +379,7 @@
     <value>Video</value>
   </data>
   <data name="Photos" xml:space="preserve">
-    <value>Photos</value>
+    <value>Photo</value>
   </data>
   <data name="Preview" xml:space="preserve">
     <value>Preview:</value>

@@ -708,6 +708,14 @@ namespace TumblThree.Applications.Controllers
             int totalPosts = 0;
             int numberOfPostsCrawled = 0;
             uint totalImages;
+            int photos = 0;
+            int videos = 0;
+            int audio = 0;
+            int text = 0;
+            int conversation = 0;
+            int quotes = 0;
+            int link = 0;
+
             List<string> images = new List<string>();
 
             var blogDoc = GetBlogDoc(blog, 0, 0);
@@ -740,6 +748,14 @@ namespace TumblThree.Applications.Controllers
 
                                     // get 50 posts per crawl/page
                                     document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
+
+                                    Interlocked.Add(ref photos, document.Descendants("post").Where(post => post.Attribute("type").Value == "photo").Count());
+                                    Interlocked.Add(ref videos, document.Descendants("post").Where(post => post.Attribute("type").Value == "video").Count());
+                                    Interlocked.Add(ref audio, document.Descendants("post").Where(post => post.Attribute("type").Value == "audio").Count());
+                                    Interlocked.Add(ref text, document.Descendants("post").Where(post => post.Attribute("type").Value == "regular").Count());
+                                    Interlocked.Add(ref conversation, document.Descendants("post").Where(post => post.Attribute("type").Value == "chat").Count());
+                                    Interlocked.Add(ref quotes, document.Descendants("post").Where(post => post.Attribute("type").Value == "quote").Count());
+                                    Interlocked.Add(ref link, document.Descendants("post").Where(post => post.Attribute("type").Value == "link").Count());
 
                                     if (shellService.Settings.DownloadImages == true)
                                     {
@@ -853,7 +869,7 @@ namespace TumblThree.Applications.Controllers
                                     {
                                         foreach (var post in (from data in document.Descendants("post")
                                                               where data.Attribute("type").Value == "video" &&
-                    data.Descendants("tag").Where(x => tags.Contains(x.Value, StringComparer.OrdinalIgnoreCase)).Any()
+                                                              data.Descendants("tag").Where(x => tags.Contains(x.Value, StringComparer.OrdinalIgnoreCase)).Any()
                                                               select data))
                                         {
                                             var videoUrl = post.Descendants("video-player").Where(x => x.Value.Contains("<source src=")).Select(result =>
@@ -892,6 +908,15 @@ namespace TumblThree.Applications.Controllers
                 );
 
             images = images.Distinct().ToList();
+
+            blog.Posts = (uint) totalPosts;
+            blog.Photos = (uint) photos;
+            blog.Videos = (uint) videos;
+            blog.Audios = (uint) audio;
+            blog.Texts = (uint) text;
+            blog.Conversations = (uint)conversation;
+            blog.Quotes = (uint) quotes;
+            blog.NumberOfLinks = (uint)link;
 
             totalImages = (uint)images.Count;
             return Tuple.Create(totalImages, images);

@@ -502,7 +502,7 @@ namespace TumblThree.Presentation.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Photos.
+        ///   Looks up a localized string similar to Photo.
         /// </summary>
         public static string Photos {
             get {
@@ -511,7 +511,7 @@ namespace TumblThree.Presentation.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Posts.
+        ///   Looks up a localized string similar to Post.
         /// </summary>
         public static string Posts {
             get {
