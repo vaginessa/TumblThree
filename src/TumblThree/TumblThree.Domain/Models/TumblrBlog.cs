@@ -20,19 +20,19 @@ namespace TumblThree.Domain.Models
 
         public TumblrBlog()
         {
-            this.description = null;
-            this.title = null;
+            this.description = String.Empty;
+            this.title = String.Empty;
             this.progress = 0;
-            this.tags = null;
+            this.tags = String.Empty;
         }
 
         public TumblrBlog(string url)
         {
-            this.description = null;
+            this.description = String.Empty;
             this.Url = url;
-            this.title = null;
+            this.title = String.Empty;
             this.progress = 0;
-            this.tags = null;
+            this.tags = String.Empty;
             this.posts = 0;
             this.texts = 0;
             this.quotes = 0;

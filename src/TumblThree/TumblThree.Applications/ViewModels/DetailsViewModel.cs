@@ -17,6 +17,7 @@ namespace TumblThree.Applications.ViewModels
         private readonly DelegateCommand copyUrlCommand;
         private Blog blogFile;
         private int count;
+        private string imagePath;
 
         [ImportingConstructor]
         public DetailsViewModel(IDetailsView view, IClipboardService clipboardService) : base(view)
