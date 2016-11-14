@@ -333,13 +333,13 @@ namespace TumblThree.Applications.Controllers
 
             blog.TotalCount = newImageCount;
 
-            var imageUrls = newImageUrls.Except(blog.Links.ToList());
+            newImageUrls.RemoveAll(item => blog.Links.Contains(item.Item1));
 
             var indexPath = Path.Combine(shellService.Settings.DownloadLocation, "Index");
             var blogPath = shellService.Settings.DownloadLocation;
 
             var parallel = Parallel.ForEach(
-                imageUrls,
+                newImageUrls,
                     new ParallelOptions { MaxDegreeOfParallelism = (shellService.Settings.ParallelImages / selectionService.ActiveItems.Count) },
                     (currentImageUrl, state) =>
                     {
@@ -350,18 +350,32 @@ namespace TumblThree.Applications.Controllers
                         if (pt.IsPaused)
                             pt.WaitWhilePausedWithResponseAsyc().Wait();
 
-                        string fileName = currentImageUrl.Split('/').Last();
+                        string fileName = currentImageUrl.Item1.Split('/').Last();
                         string fileLocation = Path.Combine(Path.Combine(blogPath, blog.Name), fileName);
 
-                        if (Download(blog, fileLocation, currentImageUrl))
+                        if (Download(blog, fileLocation, currentImageUrl.Item1))
                         {
-                            blog.Links.Add(currentImageUrl);
+                            blog.Links.Add(currentImageUrl.Item1);
                             blog.DownloadedImages = (uint) blog.Links.Count();
                             blog.Progress = (uint)((double)blog.DownloadedImages / (double)blog.TotalCount * 100);
-                            blog.LastDownloadedFile = Path.GetFullPath(fileLocation);
+                            switch (currentImageUrl.Item2)
+                            {
+                                case "Photo":
+                                    if (shellService.Settings.EnablePreview)
+                                        blog.LastDownloadedPhoto = Path.GetFullPath(fileLocation);
+                                    blog.DownloadedPhotos++;
+                                    break;
+                                case "Video":
+                                    if (shellService.Settings.EnablePreview)
+                                        blog.LastDownloadedVideo = Path.GetFullPath(fileLocation);
+                                    blog.DownloadedVideos++;
+                                    break;
+                                default:
+                                    break;
+                            }
 
                             newProgress = new DataModels.DownloadProgress();
-                            newProgress.Progress = string.Format(CultureInfo.CurrentCulture, Resources.ProgressDownloadImage, currentImageUrl.Split('/').Last()); ;
+                            newProgress.Progress = string.Format(CultureInfo.CurrentCulture, Resources.ProgressDownloadImage, currentImageUrl.Item1.Split('/').Last()); ;
                             progress.Report(newProgress);
                         }
                     });
@@ -370,7 +384,7 @@ namespace TumblThree.Applications.Controllers
             {
                 blog.LastCompleteCrawl = DateTime.Now;
             }
-            blog.LastDownloadedFile = null;
+            blog.LastDownloadedVideo = null;
             blog.Dirty = false;
             SaveBlog(blog);
 
@@ -625,6 +639,14 @@ namespace TumblThree.Applications.Controllers
             //var tuple = GetImageUrls(blog);
             //blog.TotalCount = tuple.Item1;
 
+            blog.DownloadAudio = shellService.Settings.DownloadAudios;
+            blog.DownloadPhoto = shellService.Settings.DownloadImages;
+            blog.DownloadVideo = shellService.Settings.DownloadVideos;
+            blog.DownloadText = shellService.Settings.DownloadTexts;
+            blog.DownloadQuote = shellService.Settings.DownloadQuotes;
+            blog.DownloadConversation = shellService.Settings.DownloadConversations;
+            blog.DownloadLink = shellService.Settings.DownloadLinks;
+
             blog.TotalCount = GetPostCount(blog);
 
             blog.Online = await IsBlogOnline(blog.Url);
@@ -705,7 +727,7 @@ namespace TumblThree.Applications.Controllers
             return count;
         }
 
-        public Tuple<uint, List<string>> GetImageUrls(TumblrBlog blog, IProgress<Datamodels.DownloadProgress> progress, CancellationToken ct, PauseToken pt)
+        public Tuple<uint, List<Tuple<string, string>>> GetImageUrls(TumblrBlog blog, IProgress<Datamodels.DownloadProgress> progress, CancellationToken ct, PauseToken pt)
         {
             int totalPosts = 0;
             int numberOfPostsCrawled = 0;
@@ -718,7 +740,7 @@ namespace TumblThree.Applications.Controllers
             int quotes = 0;
             int link = 0;
 
-            List<string> images = new List<string>();
+            List<Tuple<string, string>> images = new List<Tuple<string, string>>();
 
             var blogDoc = GetBlogDoc(blog, 0, 0);
 
@@ -759,7 +781,7 @@ namespace TumblThree.Applications.Controllers
                                     Interlocked.Add(ref quotes, document.Descendants("post").Where(post => post.Attribute("type").Value == "quote").Count());
                                     Interlocked.Add(ref link, document.Descendants("post").Where(post => post.Attribute("type").Value == "link").Count());
 
-                                    if (shellService.Settings.DownloadImages == true)
+                                    if (blog.DownloadPhoto == true)
                                     {
                                         foreach (var post in (from data in document.Descendants("post") where data.Attribute("type").Value == "photo" select data))
                                         {
@@ -774,7 +796,7 @@ namespace TumblThree.Applications.Controllers
                                                     if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
                                                         continue;
                                                     Monitor.Enter(images);
-                                                    images.Add(imageUrl);
+                                                    images.Add(Tuple.Create(imageUrl, "Photo"));
                                                     Monitor.Exit(images);
                                                 }
                                             }
@@ -788,12 +810,12 @@ namespace TumblThree.Applications.Controllers
                                                     continue;
 
                                                 Monitor.Enter(images);
-                                                images.Add(imageUrl);
+                                                images.Add(Tuple.Create(imageUrl, "Photo"));
                                                 Monitor.Exit(images);
                                             }
                                         }
                                     }
-                                    if (shellService.Settings.DownloadVideos == true)
+                                    if (blog.DownloadVideo == true)
                                     {
                                         foreach (var post in (from data in document.Descendants("post") where data.Attribute("type").Value == "video" select data))
                                         {
@@ -806,13 +828,13 @@ namespace TumblThree.Applications.Controllers
                                                 if (shellService.Settings.VideoSize == 1080)
                                                 {
                                                     Monitor.Enter(images);
-                                                    images.Add(video.Replace("/480", "") + ".mp4");
+                                                    images.Add(Tuple.Create(video.Replace("/480", "") + ".mp4", "Video"));
                                                     Monitor.Exit(images);
                                                 }
                                                 else if (shellService.Settings.VideoSize == 480)
                                                 {
                                                     Monitor.Enter(images);
-                                                    images.Add("http://vt.tumblr.com/" + video.Replace("/480", "").Split('/').Last() + "_480.mp4");
+                                                    images.Add(Tuple.Create("http://vt.tumblr.com/" + video.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
                                                     Monitor.Exit(images);
                                                 }
                                             }
@@ -829,7 +851,7 @@ namespace TumblThree.Applications.Controllers
                                     // get 50 posts per crawl/page
                                     document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
 
-                                    if (shellService.Settings.DownloadImages == true)
+                                    if (blog.DownloadPhoto == true)
                                     {
 
                                         foreach (var post in (from data in document.Descendants("post")
@@ -848,7 +870,7 @@ namespace TumblThree.Applications.Controllers
                                                     if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
                                                         continue;
                                                     Monitor.Enter(images);
-                                                    images.Add(imageUrl);
+                                                    images.Add(Tuple.Create(imageUrl, "Photo"));
                                                     Monitor.Exit(images);
                                                 }
                                             }
@@ -862,12 +884,12 @@ namespace TumblThree.Applications.Controllers
                                                     continue;
 
                                                 Monitor.Enter(images);
-                                                images.Add(imageUrl);
+                                                images.Add(Tuple.Create(imageUrl, "Photo"));
                                                 Monitor.Exit(images);
                                             }
                                         }
                                     }
-                                    if (shellService.Settings.DownloadVideos == true)
+                                    if (blog.DownloadVideo == true)
                                     {
                                         foreach (var post in (from data in document.Descendants("post")
                                                               where data.Attribute("type").Value == "video" &&
@@ -883,13 +905,13 @@ namespace TumblThree.Applications.Controllers
                                                 if (shellService.Settings.VideoSize == 1080)
                                                 {
                                                     Monitor.Enter(images);
-                                                    images.Add(video.Replace("/480", "") + ".mp4");
+                                                    images.Add(Tuple.Create(video.Replace("/480", "") + ".mp4", "Video"));
                                                     Monitor.Exit(images);
                                                 }
                                                 else if (shellService.Settings.VideoSize == 480)
                                                 {
                                                     Monitor.Enter(images);
-                                                    images.Add("http://vt.tumblr.com/" + video.Split('/').Last() + "_480.mp4");
+                                                    images.Add(Tuple.Create("http://vt.tumblr.com/" + video.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
                                                     Monitor.Exit(images);
                                                 }
                                             }

@@ -19,8 +19,6 @@ namespace TumblThree.Applications.ViewModels
         private ICommand showFilesCommand;
         private ICommand visitBlogCommand;
 
-        
-
         [ImportingConstructor]
         public ManagerViewModel(IManagerView view, IShellService shellService, Lazy<ISelectionService> selectionService, ICrawlerService crawlerService) : base(view)
         {
@@ -29,8 +27,14 @@ namespace TumblThree.Applications.ViewModels
             this.selectedManagerItems = new ObservableCollection<Blog>();
             this.crawlerService = crawlerService;
 
-            if (shellService.Settings.ColumnWidths.Count != 0)
-                view.DataGridColumnRestore = ShellService.Settings.ColumnWidths;
+            try
+            {
+                if (shellService.Settings.ColumnWidths.Count != 0)
+                    view.DataGridColumnRestore = ShellService.Settings.ColumnWidths;
+            }
+            catch
+            {
+            }
 
             ShellService.Closing += ViewClosed;
         }
