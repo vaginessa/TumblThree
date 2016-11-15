@@ -6,6 +6,8 @@ using TumblThree.Applications.Services;
 using TumblThree.Applications.Views;
 using System.Collections.ObjectModel;
 using TumblThree.Domain.Models;
+using TumblThree.Domain;
+using TumblThree.Applications.Properties;
 
 namespace TumblThree.Applications.ViewModels
 {
@@ -32,8 +34,11 @@ namespace TumblThree.Applications.ViewModels
                 if (shellService.Settings.ColumnWidths.Count != 0)
                     view.DataGridColumnRestore = ShellService.Settings.ColumnWidths;
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Error("ManagerController: {0}", ex);
+                shellService.ShowError(ex, Resources.CouldNotRestoreUISettings);
+                return;
             }
 
             ShellService.Closing += ViewClosed;

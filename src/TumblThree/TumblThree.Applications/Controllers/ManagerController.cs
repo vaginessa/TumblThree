@@ -21,6 +21,10 @@ using System.Windows;
 using System.Windows.Threading;
 using System.Globalization;
 using System.Xml.Linq;
+using System.Net;
+using System.Xml.Serialization;
+using System.Text;
+using System.Web;
 
 namespace TumblThree.Applications.Controllers
 {
@@ -384,6 +388,7 @@ namespace TumblThree.Applications.Controllers
             {
                 blog.LastCompleteCrawl = DateTime.Now;
             }
+            blog.LastDownloadedPhoto = null;
             blog.LastDownloadedVideo = null;
             blog.Dirty = false;
             SaveBlog(blog);
@@ -570,30 +575,76 @@ namespace TumblThree.Applications.Controllers
         {
             return Task<bool>.Factory.StartNew(() =>
             {
-                string ApiUrl = GetApiUrl(url);
+                url = GetApiUrl(url, 1);
 
-                XDocument blogDoc = new XDocument();
-                try
-                {
-                    blogDoc = XDocument.Load(ApiUrl.ToString() + "0" + "&num=0");
+                var blogDoc = RequestData(url);
+                if (blogDoc != null)
                     return true;
-                }
-                catch
-                {
+                else
                     return false;
-                }
             },
             TaskCreationOptions.LongRunning);
         }
 
-        private string GetApiUrl(string url)
+        private string GetApiUrl(string url, int count, int start = 0)
         {
+            /// <summary>
+            /// construct the tumblr api post url of a blog.
+            /// <para>the blog for the url</para>
+            /// </summary>
+            /// <returns>A string containing the api url of the blog.</returns>
             if (url.Last<char>() != '/')
-                url += "/api/read?start=";
+                url += "/api/read";
             else
-                url += "api/read?start=";
+                url += "api/read";
 
-            return url;
+            var parameters = new Dictionary<string, string>
+            {
+              { "num", count.ToString() }
+            };
+            if (start > 0)
+                parameters["start"] = start.ToString();
+            return url + "?" + UrlEncode(parameters);
+        }
+
+        private Datamodels.Xml.Tumblr RequestData(string url)
+        {
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                request.Method = "GET";
+                request.ServicePoint.Expect100Continue = false;
+                request.ContentType = "x-www-from-urlencoded";
+
+                using (HttpWebResponse response = request.GetResponse() as HttpWebResponse)
+                {
+                    using (ThrottledStream stream = new ThrottledStream(response.GetResponseStream(), (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages) * 1024))
+                    {
+                        using (StreamReader reader = new StreamReader(stream))
+                        {
+                            XmlSerializer xmlSerializer = new XmlSerializer(typeof(Datamodels.Xml.Tumblr));
+                            Datamodels.Xml.Tumblr data = (Datamodels.Xml.Tumblr)xmlSerializer.Deserialize(reader);
+                            return data;
+                        }
+                    }
+                }
+            }
+            catch (WebException ex)
+            {
+                return null;
+            }
+        }
+
+        private static string UrlEncode(IDictionary<string, string> parameters)
+        {
+            var sb = new StringBuilder();
+            foreach (var val in parameters)
+            {
+                // add each parameter to the query string, url-encoding the value.
+                sb.AppendFormat("{0}={1}&", val.Key, HttpUtility.UrlEncode(val.Value));
+            }
+            sb.Remove(sb.Length - 1, 1); // remove last '&'
+            return sb.ToString();
         }
 
         private string ExtractUrl(string url)
@@ -647,7 +698,7 @@ namespace TumblThree.Applications.Controllers
             blog.DownloadConversation = shellService.Settings.DownloadConversations;
             blog.DownloadLink = shellService.Settings.DownloadLinks;
 
-            blog.TotalCount = GetPostCount(blog);
+            blog = await GetMetaInformation(blog);
 
             blog.Online = await IsBlogOnline(blog.Url);
 
@@ -696,35 +747,25 @@ namespace TumblThree.Applications.Controllers
             return true;
         }
 
-        public XDocument GetBlogDoc(Blog blog, int numPosts, int page)
+        private Task<TumblrBlog> GetMetaInformation(TumblrBlog blog)
         {
-            XDocument blogDoc = new XDocument();
-
-            try
+            return Task<TumblrBlog>.Factory.StartNew(() =>
             {
-                blogDoc = XDocument.Load(GetApiUrl(blog.Url) + (numPosts * page) + "&num=" + numPosts);
-            }
-            catch (Exception ex)
-            {
-                blog.Online = false;
-                Logger.Error("ManagerController:GetBlogDoc: {0}", ex);
-                shellService.ShowError(ex, Resources.BlogIsOffline, blog.Name);
-            }
-            return blogDoc;
-        }
+                string url = GetApiUrl(blog.Url, 1);
 
-        public uint GetPostCount(Blog blog)
-        {
-            uint count = 0;
+                var blogDoc = RequestData(url);
 
-            XDocument blogDoc = GetBlogDoc(blog, 0, 0);
-
-            foreach (var type in from data in blogDoc.Descendants("posts") select new { Total = data.Attribute("total").Value })
-            {
-                count = Convert.ToUInt32(type.Total.ToString());
-            }
-
-            return count;
+                if (blogDoc != null)
+                {
+                    blog.Title = blogDoc.Tumblelog.Title;
+                    blog.Description = blogDoc.Tumblelog.Text;
+                    blog.TotalCount = UInt32.Parse(blogDoc.Posts.Total);
+                    return blog;
+                }
+                else
+                    return blog;
+            },
+            TaskCreationOptions.LongRunning);
         }
 
         public Tuple<uint, List<Tuple<string, string>>> GetImageUrls(TumblrBlog blog, IProgress<Datamodels.DownloadProgress> progress, CancellationToken ct, PauseToken pt)
@@ -739,15 +780,12 @@ namespace TumblThree.Applications.Controllers
             int conversation = 0;
             int quotes = 0;
             int link = 0;
-
             List<Tuple<string, string>> images = new List<Tuple<string, string>>();
 
-            var blogDoc = GetBlogDoc(blog, 0, 0);
+            string url = GetApiUrl(blog.Url, 1);
 
-            foreach (var type in from data in blogDoc.Descendants("posts") select new { Total = data.Attribute("total").Value })
-            {
-                totalPosts = Convert.ToInt32(type.Total.ToString());
-            }
+            var blogDoc = RequestData(url);
+            totalPosts = Int32.Parse(blogDoc.Posts.Total);
 
             // Generate URL list of Images
             // the api shows 50 posts at max, determine the number of pages to crawl
@@ -768,47 +806,30 @@ namespace TumblThree.Applications.Controllers
                                 // check for tags -- crawling for all images here
                                 if (blog.Tags == null || blog.Tags.Count() == 0)
                                 {
-                                    XDocument document = null;
+                                    DataModels.Xml.Tumblr document = null;
 
                                     // get 50 posts per crawl/page
-                                    document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
 
-                                    Interlocked.Add(ref photos, document.Descendants("post").Where(post => post.Attribute("type").Value == "photo").Count());
-                                    Interlocked.Add(ref videos, document.Descendants("post").Where(post => post.Attribute("type").Value == "video").Count());
-                                    Interlocked.Add(ref audio, document.Descendants("post").Where(post => post.Attribute("type").Value == "audio").Count());
-                                    Interlocked.Add(ref text, document.Descendants("post").Where(post => post.Attribute("type").Value == "regular").Count());
-                                    Interlocked.Add(ref conversation, document.Descendants("post").Where(post => post.Attribute("type").Value == "chat").Count());
-                                    Interlocked.Add(ref quotes, document.Descendants("post").Where(post => post.Attribute("type").Value == "quote").Count());
-                                    Interlocked.Add(ref link, document.Descendants("post").Where(post => post.Attribute("type").Value == "link").Count());
+                                    url = GetApiUrl(blog.Url, 50, i * 50);
+                                    document = RequestData(url);
+
+                                    Interlocked.Add(ref photos, document.Posts.Post.Where(posts => posts.Type.Equals("photo")).Count());
+                                    Interlocked.Add(ref videos, document.Posts.Post.Where(posts => posts.Type.Equals("video")).Count());
+                                    Interlocked.Add(ref audio, document.Posts.Post.Where(posts => posts.Type.Equals("audio")).Count());
+                                    Interlocked.Add(ref text, document.Posts.Post.Where(posts => posts.Type.Equals("regular")).Count());
+                                    Interlocked.Add(ref conversation, document.Posts.Post.Where(posts => posts.Type.Equals("chat")).Count());
+                                    Interlocked.Add(ref quotes, document.Posts.Post.Where(posts => posts.Type.Equals("quote")).Count());
+                                    Interlocked.Add(ref link, document.Posts.Post.Where(posts => posts.Type.Equals("link")).Count());
 
                                     if (blog.DownloadPhoto == true)
                                     {
-                                        foreach (var post in (from data in document.Descendants("post") where data.Attribute("type").Value == "photo" select data))
+                                        foreach (DataModels.Xml.Post post in document.Posts.Post.Where(posts => posts.Type.Equals("photo")))
                                         {
-                                            // photoset
-                                            if (post.Descendants("photoset").Count() > 0)
+                                            foreach (DataModels.Xml.Photourl photo in post.Photourl.Where(photosize => photosize.Maxwidth.Equals(shellService.Settings.ImageSize.ToString())))
                                             {
-                                                foreach (var photo in (from photoData in post.Descendants("photoset").Descendants("photo") select photoData))
-                                                {
-                                                    var imageUrl = String.Concat(photo.Descendants("photo-url").Where(photo_url =>
-                                                        photo_url.Attribute("max-width").Value == shellService.Settings.ImageSize.ToString()).Nodes());
-
-                                                    if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
-                                                        continue;
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create(imageUrl, "Photo"));
-                                                    Monitor.Exit(images);
-                                                }
-                                            }
-                                            // single image
-                                            else
-                                            {
-                                                var imageUrl = String.Concat(post.Descendants("photo-url").Where(photo_url =>
-                                                    photo_url.Attribute("max-width").Value == shellService.Settings.ImageSize.ToString()).Nodes());
-
+                                                var imageUrl = photo.Text;
                                                 if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
                                                     continue;
-
                                                 Monitor.Enter(images);
                                                 images.Add(Tuple.Create(imageUrl, "Photo"));
                                                 Monitor.Exit(images);
@@ -817,25 +838,27 @@ namespace TumblThree.Applications.Controllers
                                     }
                                     if (blog.DownloadVideo == true)
                                     {
-                                        foreach (var post in (from data in document.Descendants("post") where data.Attribute("type").Value == "video" select data))
+                                        foreach (DataModels.Xml.Post post in document.Posts.Post.Where(posts => posts.Type.Equals("video")))
                                         {
-                                            var videoUrl = post.Descendants("video-player").Where(x => x.Value.Contains("<source src=")).Select(result =>
-                                            System.Text.RegularExpressions.Regex.Match(
-                                                      result.Value, "<source src=\"(.*)\" type=\"video/mp4\">").Groups[1].Value).ToList();
-
-                                            foreach (string video in videoUrl)
+                                            foreach (DataModels.Xml.Videoplayer video in post.Videoplayer.Where(videosize => videosize.Maxwidth.Equals(shellService.Settings.VideoSize)))
                                             {
-                                                if (shellService.Settings.VideoSize == 1080)
+                                                var videoUrl = video.ToString().Where(x => x.ToString().Contains("<source src=")).Select(result =>
+                                                    System.Text.RegularExpressions.Regex.Match(
+                                                    result.ToString(), "<source src=\"(.*)\" type=\"video/mp4\">").Groups[1].Value).ToList();
+                                                foreach (string vurl in videoUrl)
                                                 {
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create(video.Replace("/480", "") + ".mp4", "Video"));
-                                                    Monitor.Exit(images);
-                                                }
-                                                else if (shellService.Settings.VideoSize == 480)
-                                                {
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create("http://vt.tumblr.com/" + video.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
-                                                    Monitor.Exit(images);
+                                                    if (shellService.Settings.VideoSize == 1080)
+                                                    {
+                                                        Monitor.Enter(images);
+                                                        images.Add(Tuple.Create(vurl.Replace("/480", "") + ".mp4", "Video"));
+                                                        Monitor.Exit(images);
+                                                    }
+                                                    else if (shellService.Settings.VideoSize == 480)
+                                                    {
+                                                        Monitor.Enter(images);
+                                                        images.Add(Tuple.Create("http://vt.tumblr.com/" + vurl.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
+                                                        Monitor.Exit(images);
+                                                    }
                                                 }
                                             }
                                         }
@@ -846,43 +869,22 @@ namespace TumblThree.Applications.Controllers
                                 {
                                     List<string> tags = blog.Tags.Split(',').Select(x => x.Trim()).ToList();
 
-                                    XDocument document = null;
+                                    DataModels.Xml.Tumblr document = null;
 
                                     // get 50 posts per crawl/page
-                                    document = XDocument.Load(ThrottledStream.ReadFromURLIntoStream(GetApiUrl(blog.Url) + (i * 50).ToString() + "&num=50", (shellService.Settings.Bandwidth / shellService.Settings.ParallelImages), shellService.Settings.TimeOut));
+
+                                    url = GetApiUrl(blog.Url, 50, i * 50);
+                                    document = RequestData(url);
 
                                     if (blog.DownloadPhoto == true)
                                     {
-
-                                        foreach (var post in (from data in document.Descendants("post")
-                                                              where data.Attribute("type").Value == "photo" &&
-                                                              data.Descendants("tag").Where(x => tags.Contains(x.Value, StringComparer.OrdinalIgnoreCase)).Any()
-                                                              select data))
+                                        foreach (DataModels.Xml.Post post in document.Posts.Post.Where(posts => posts.Tag.Any(tag => tags.Equals(tag)) && posts.Type.Equals("photo")))
                                         {
-                                            // photoset
-                                            if (post.Descendants("photoset").Count() > 0)
+                                            foreach (DataModels.Xml.Photourl photo in post.Photourl.Where(photosize => photosize.Maxwidth.Equals(shellService.Settings.ImageSize.ToString())))
                                             {
-                                                foreach (var photo in (from data in document.Descendants("post") where data.Attribute("type").Value == "photo" select data))
-                                                {
-                                                    var imageUrl = String.Concat(photo.Descendants("photo-url").Where(photo_url =>
-                                                        photo_url.Attribute("max-width").Value == shellService.Settings.ImageSize.ToString()).Nodes());
-
-                                                    if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
-                                                        continue;
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create(imageUrl, "Photo"));
-                                                    Monitor.Exit(images);
-                                                }
-                                            }
-                                            // single image
-                                            else
-                                            {
-                                                var imageUrl = String.Concat(post.Descendants("photo-url").Where(photo_url =>
-                                                    photo_url.Attribute("max-width").Value == shellService.Settings.ImageSize.ToString()).Nodes());
-
+                                                var imageUrl = photo.Text;
                                                 if (shellService.Settings.SkipGif == true && imageUrl.EndsWith(".gif"))
                                                     continue;
-
                                                 Monitor.Enter(images);
                                                 images.Add(Tuple.Create(imageUrl, "Photo"));
                                                 Monitor.Exit(images);
@@ -891,28 +893,27 @@ namespace TumblThree.Applications.Controllers
                                     }
                                     if (blog.DownloadVideo == true)
                                     {
-                                        foreach (var post in (from data in document.Descendants("post")
-                                                              where data.Attribute("type").Value == "video" &&
-                                                              data.Descendants("tag").Where(x => tags.Contains(x.Value, StringComparer.OrdinalIgnoreCase)).Any()
-                                                              select data))
+                                        foreach (DataModels.Xml.Post post in document.Posts.Post.Where(posts => posts.Tag.Any(tag => tags.Equals(tag)) && posts.Type.Equals("video")))
                                         {
-                                            var videoUrl = post.Descendants("video-player").Where(x => x.Value.Contains("<source src=")).Select(result =>
-                                            System.Text.RegularExpressions.Regex.Match(
-                                                      result.Value, "<source src=\"(.*)\" type=\"video/mp4\">").Groups[1].Value).ToList();
-
-                                            foreach (string video in videoUrl)
+                                            foreach (DataModels.Xml.Videoplayer video in post.Videoplayer.Where(posts => posts.Maxwidth.Equals(shellService.Settings.VideoSize)))
                                             {
-                                                if (shellService.Settings.VideoSize == 1080)
+                                                var videoUrl = video.ToString().Where(x => x.ToString().Contains("<source src=")).Select(result =>
+                                                    System.Text.RegularExpressions.Regex.Match(
+                                                    result.ToString(), "<source src=\"(.*)\" type=\"video/mp4\">").Groups[1].Value).ToList();
+                                                foreach (string vurl in videoUrl)
                                                 {
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create(video.Replace("/480", "") + ".mp4", "Video"));
-                                                    Monitor.Exit(images);
-                                                }
-                                                else if (shellService.Settings.VideoSize == 480)
-                                                {
-                                                    Monitor.Enter(images);
-                                                    images.Add(Tuple.Create("http://vt.tumblr.com/" + video.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
-                                                    Monitor.Exit(images);
+                                                    if (shellService.Settings.VideoSize == 1080)
+                                                    {
+                                                        Monitor.Enter(images);
+                                                        images.Add(Tuple.Create(vurl.Replace("/480", "") + ".mp4", "Video"));
+                                                        Monitor.Exit(images);
+                                                    }
+                                                    else if (shellService.Settings.VideoSize == 480)
+                                                    {
+                                                        Monitor.Enter(images);
+                                                        images.Add(Tuple.Create("http://vt.tumblr.com/" + vurl.Replace("/480", "").Split('/').Last() + "_480.mp4", "Video"));
+                                                        Monitor.Exit(images);
+                                                    }
                                                 }
                                             }
                                         }
